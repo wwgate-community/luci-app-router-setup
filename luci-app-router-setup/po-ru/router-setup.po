@@ -1,0 +1,178 @@
+msgid ""
+msgstr ""
+"Content-Type: text/plain; charset=UTF-8\n"
+"Language: ru\n"
+"Plural-Forms: nplurals=3; plural=(n%10==1 && n%100!=11 ? 0 : n%10>=2 && "
+"n%10<=4 && (n%100<10 || n%100>=20) ? 1 : 2);\n"
+
+msgid "Quick Setup"
+msgstr "Быстрая настройка"
+
+msgid "Options"
+msgstr "Дополнительно"
+
+msgid "Hide from menu"
+msgstr "Скрыть из меню"
+
+msgid ""
+"Remove the Quick Setup entry from the LuCI menu. To bring it back, open "
+"System → Quick Setup."
+msgstr ""
+"Убрать пункт «Быстрая настройка» из меню LuCI. Чтобы вернуть его, откройте "
+"Система → Быстрая настройка."
+
+msgid "The Quick Setup wizard is currently hidden from the LuCI menu."
+msgstr "Мастер быстрой настройки сейчас скрыт из меню LuCI."
+
+msgid "Uncheck and apply to bring Quick Setup back to the main menu."
+msgstr "Снимите галочку и примените, чтобы вернуть «Быструю настройку» в главное меню."
+
+msgid "Initial Router Setup"
+msgstr "Мастер настройки"
+
+msgid "Here you can perform a simple initial setup of your router."
+msgstr "Здесь вы можете выполнить простую первичную настройку вашего роутера."
+
+msgid "Here you can perform a simple initial setup of your %s"
+msgstr "Здесь вы можете выполнить простую первичную настройку вашего %s"
+
+msgid "Internet"
+msgstr "Интернет"
+
+msgid "Protocol"
+msgstr "Протокол"
+
+msgid "DHCP client"
+msgstr "DHCP-клиент"
+
+msgid "Static address"
+msgstr "Статический адрес"
+
+msgid "MAC Address"
+msgstr "MAC-адрес"
+
+msgid "IP address"
+msgstr "IP-адрес"
+
+msgid "Netmask"
+msgstr "Маска сети"
+
+msgid "Gateway"
+msgstr "Шлюз"
+
+msgid "Username"
+msgstr "Имя пользователя"
+
+msgid "Password"
+msgstr "Пароль"
+
+msgid "Select the protocol that matches your provider settings."
+msgstr ""
+"Выберите протокол, соответствующий настройкам вашего провайдера. Если вы не "
+"знаете, какой протокол подключения использует ваш провайдер, свяжитесь с "
+"ним для уточнения."
+
+msgid "Network"
+msgstr "Сеть"
+
+msgid "Specify the router IP address"
+msgstr "Укажите IP-адрес роутера"
+
+msgid "Clone MAC if required by your provider"
+msgstr "Клонировать MAC, если требует провайдер"
+
+msgid "Leave empty to obtain automatically from the provider"
+msgstr "Оставьте пустым для автоматического получения от провайдера"
+
+msgid "Set the desired Wi-Fi name and password."
+msgstr "Установите желаемое название Wi-Fi и пароль от Wi-Fi."
+
+msgid "Same name for both Wi‑Fi bands"
+msgstr "Одинаковое название Wi-Fi для 2.4 ГГц и 5 ГГц"
+
+msgid "Wi-Fi network name"
+msgstr "Название Wi-Fi сети"
+
+msgid "Wi-Fi Password"
+msgstr "Пароль от Wi-Fi"
+
+msgid "Wi-Fi 2.4Ghz network name"
+msgstr "Название Wi-Fi сети 2.4Ghz"
+
+msgid "Wi-Fi 2.4Ghz Password"
+msgstr "Пароль от Wi-Fi 2.4Ghz"
+
+msgid "Wi-Fi 5Ghz network name"
+msgstr "Название Wi-Fi сети 5Ghz"
+
+msgid "Wi-Fi 5Ghz Password"
+msgstr "Пароль от Wi-Fi 5Ghz"
+
+msgid "Router IP address"
+msgstr "IP-адрес роутера"
+
+msgid "Enable IPv6"
+msgstr "Включить IPv6"
+
+msgid "Server"
+msgstr "Сервер"
+
+msgid "Wi-Fi from another router"
+msgstr "Wi-Fi другого роутера"
+
+msgid "Wi-Fi network to connect to"
+msgstr "Сеть, к которой подключиться"
+
+msgid "The network of the other router that shares its internet"
+msgstr "Wi-Fi сеть другого роутера, интернет которой будет раздаваться дальше"
+
+msgid "Password of that network"
+msgstr "Пароль этой сети"
+
+msgid "Leave empty for an open network"
+msgstr "Оставьте пустым для открытой сети"
+
+msgid "Search for networks…"
+msgstr "Найти сети…"
+
+msgid "Searching for Wi-Fi networks…"
+msgstr "Поиск Wi-Fi сетей…"
+
+msgid "Scanning the air, this takes a few seconds…"
+msgstr "Сканирование эфира, это займёт несколько секунд…"
+
+msgid "Select a Wi-Fi network"
+msgstr "Выберите Wi-Fi сеть"
+
+msgid "No networks found. Make sure the other router is powered on and in range."
+msgstr "Сети не найдены. Убедитесь, что другой роутер включён и находится в зоне доступа."
+
+msgid "This network is protected — enter its password"
+msgstr "Эта сеть защищена — введите её пароль"
+
+msgid "Network"
+msgstr "Сеть"
+
+msgid "Band"
+msgstr "Диапазон"
+
+msgid "Signal"
+msgstr "Сигнал"
+
+msgid "Security"
+msgstr "Защита"
+
+msgid "Open"
+msgstr "Открытая"
+
+msgid "2.4 GHz"
+msgstr "2.4 ГГц"
+
+msgid "5 GHz"
+msgstr "5 ГГц"
+
+msgid "Cancel"
+msgstr "Отмена"
+
+msgid "Use custom DNS servers"
+msgstr "Использовать собственные DNS-серверы"

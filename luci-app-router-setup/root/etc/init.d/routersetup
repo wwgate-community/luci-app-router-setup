@@ -1,0 +1,625 @@
+#!/bin/sh /etc/rc.common
+# wwGate quick-setup service.
+#
+# Responsibilities:
+#   boot   - mirror the live network/wireless state into /etc/config/routersetup
+#            so the setup UI always presents current values;
+#   reload - push /etc/config/routersetup back into network/wireless/dhcp, but
+#            only when the config was written moments ago by the setup UI.
+
+USE_PROCD=1
+START=99
+
+# --- helpers -----------------------------------------------------------------
+
+# uci section id of the network device section whose name is $1
+device_section() {
+	uci -q show network | sed -n "s/^network\.\([^.]*\)\.name='$1'\$/\1/p" | head -n1
+}
+
+# current MAC of interface $1: a uci macaddr override wins over sysfs
+live_mac() {
+	local sec mac
+	sec=$(device_section "$1")
+	[ -n "$sec" ] && mac=$(uci -q get "network.$sec.macaddr")
+	[ -z "$mac" ] && mac=$(cat "/sys/class/net/$1/address" 2>/dev/null)
+	echo "$mac"
+}
+
+# user-set MAC-clone override for interface $1, if any. Unlike live_mac() this
+# never falls back to the sysfs address: right after boot the driver may still
+# report a temporary MAC there, and mirroring that into the wizard makes it show
+# a bogus address until the link settles.
+clone_mac() {
+	local sec
+	sec=$(device_section "$1")
+	[ -n "$sec" ] && uci -q get "network.$sec.macaddr"
+}
+
+set_wan_macaddr() {	# $1 = interface name, $2 = mac
+	local sec
+	[ -n "$1" ] && [ -n "$2" ] || return 0
+	sec=$(device_section "$1")
+	# Секции device для WAN-порта в типовом конфиге ПРОСТО НЕТ: там объявлен
+	# только br-lan, а wan описан как `interface` с `option device 'eth1'`.
+	# Раньше в этом случае device_section возвращала пусто, и функция молча
+	# выходила - MAC не применялся вообще (сохранялся лишь в routersetup).
+	# Поэтому недостающую секцию создаём. Именно device-секция, а не
+	# `network.wan.macaddr`: на interface-секции netifd считает опцию устаревшей,
+	# и её всё равно затирает drop_wan_ifaces() при следующем применении.
+	if [ -z "$sec" ]; then
+		sec=$(uci -q add network device) || return 0
+		uci -q set "network.$sec.name=$1"
+	fi
+	uci -q set "network.$sec.macaddr=$2"
+}
+
+set_iface_dns() {	# $1 = interface section, $2 = space-separated resolvers
+	[ -n "$2" ] || return 0
+	uci -q set "network.$1.peerdns=0"
+	uci -q set "network.$1.dns=$2"
+}
+
+# --- mirror: live system state -> /etc/config/routersetup ------------------------
+
+MIRROR_DIRTY=0
+
+mirror_opt() {	# $1 = routersetup option, $2 = value; an empty value deletes
+	[ "$(uci -q get "routersetup.default.$1")" = "$2" ] && return 0
+	if [ -n "$2" ]; then
+		uci -q set "routersetup.default.$1=$2"
+	else
+		uci -q delete "routersetup.default.$1"
+	fi
+	MIRROR_DIRTY=1
+}
+
+mirror_dns() {	# $1 = space-separated resolver list
+	[ "$(uci -q get routersetup.default.wan_dns)" = "$1" ] && return 0
+	uci -q delete routersetup.default.wan_dns
+	local d
+	for d in $1; do
+		uci -q add_list "routersetup.default.wan_dns=$d"
+	done
+	MIRROR_DIRTY=1
+}
+
+proto_opts() {	# routersetup options meaningful only for WAN protocol $1
+	case "$1" in
+		static) echo "wan_ipaddr wan_netmask wan_gateway" ;;
+		pppoe)  echo "wan_pppoe_user wan_pppoe_pass" ;;
+		l2tp)   echo "wan_l2tp_server wan_l2tp_user wan_l2tp_pass" ;;
+		pptp)   echo "wan_pptp_server wan_pptp_user wan_pptp_pass" ;;
+		wifi)   echo "wan_wifi_ssid wan_wifi_key wan_wifi_radio wan_wifi_enc" ;;
+	esac
+}
+
+# Диапазоны, у которых реально есть AP-интерфейс: "2", "5", "6" (может быть пусто).
+# Считаем по band радиоустройства, а НЕ по порядку секций: @wifi-iface[0]/[1] -
+# это допущение «ровно два радио, первое 2.4, второе 5», которое ломается на
+# однодиапазонных платах, на 6 ГГц и при нескольких AP на одном радио.
+wifi_ap_bands() {
+	local sec radio band out=""
+	for sec in $(uci -q show wireless | sed -n "s/^wireless\.\([^.]*\)=wifi-iface\$/\1/p"); do
+		[ "$(uci -q get "wireless.$sec.mode")" = "ap" ] || continue
+		radio=$(uci -q get "wireless.$sec.device")
+		band=$(uci -q get "wireless.$radio.band")
+		band=${band%g}
+		[ -n "$band" ] || continue
+		case " $out " in *" $band "*) ;; *) out="$out $band" ;; esac
+	done
+	echo $out
+}
+
+# ssid/key первого AP-интерфейса заданного диапазона
+wifi_band_opt() {	# $1 = band (2/5/6), $2 = ssid|key
+	local sec radio band
+	for sec in $(uci -q show wireless | sed -n "s/^wireless\.\([^.]*\)=wifi-iface\$/\1/p"); do
+		[ "$(uci -q get "wireless.$sec.mode")" = "ap" ] || continue
+		radio=$(uci -q get "wireless.$sec.device")
+		band=$(uci -q get "wireless.$radio.band")
+		[ "${band%g}" = "$1" ] || continue
+		uci -q get "wireless.$sec.$2"
+		return 0
+	done
+}
+
+mirror_wifi() {
+	local bands nb ssid2 key2 ssid5 key5 s k
+	bands=$(wifi_ap_bands)
+	set -- $bands; nb=$#
+
+	# 0 или 1 диапазон -> в мастере ОДИН комплект полей (режим общего SSID).
+	# Иначе он показывал бы «пароль 5 ГГц» на однодиапазонной плате, поле
+	# оставалось пустым, и apply_profile молча отказывался применять ВСЁ.
+	if [ "$nb" -le 1 ]; then
+		s=$(wifi_band_opt "${1:-2}" ssid)
+		k=$(wifi_band_opt "${1:-2}" key)
+		mirror_opt unify_ssid 1
+		mirror_opt wifi_ssid2 ""
+		mirror_opt wifi_key2 ""
+		mirror_opt wifi_ssid5 ""
+		mirror_opt wifi_key5 ""
+		mirror_opt wifi_ssid "$s"
+		mirror_opt wifi_key "$k"
+		return 0
+	fi
+
+	ssid2=$(wifi_band_opt 2 ssid)
+	key2=$(wifi_band_opt 2 key)
+	ssid5=$(wifi_band_opt 5 ssid)
+	key5=$(wifi_band_opt 5 key)
+
+	if [ "$ssid2" = "$ssid5" ]; then
+		mirror_opt unify_ssid 1
+		mirror_opt wifi_ssid2 ""
+		mirror_opt wifi_key2 ""
+		mirror_opt wifi_ssid5 ""
+		mirror_opt wifi_key5 ""
+		mirror_opt wifi_ssid "$ssid2"
+		mirror_opt wifi_key "$key2"
+	else
+		mirror_opt unify_ssid 0
+		mirror_opt wifi_ssid ""
+		mirror_opt wifi_key ""
+		mirror_opt wifi_ssid2 "$ssid2"
+		mirror_opt wifi_key2 "$key2"
+		mirror_opt wifi_ssid5 "$ssid5"
+		mirror_opt wifi_key5 "$key5"
+	fi
+}
+
+mirror_system() {
+	local proto other opt
+	proto=$(uci -q get network.wan.proto)
+
+	# a sta wifi-iface feeding wan means the uplink is another router's Wi-Fi
+	if [ "$(uci -q get wireless.wwan.mode)" = "sta" ] && \
+	   [ "$(uci -q get wireless.wwan.network)" = "wan" ]; then
+		proto="wifi"
+	fi
+	mirror_opt wan_proto "$proto"
+
+	# drop leftovers from protocols other than the active one
+	for other in static pppoe l2tp pptp wifi; do
+		[ "$other" = "$proto" ] && continue
+		for opt in $(proto_opts "$other"); do
+			mirror_opt "$opt" ""
+		done
+	done
+
+	case "$proto" in
+		dhcp)
+			mirror_dns "$(uci -q get network.wan.dns)"
+			;;
+		static)
+			mirror_opt wan_ipaddr "$(uci -q get network.wan.ipaddr)"
+			mirror_opt wan_netmask "$(uci -q get network.wan.netmask)"
+			mirror_opt wan_gateway "$(uci -q get network.wan.gateway)"
+			mirror_dns "$(uci -q get network.wan.dns)"
+			;;
+		pppoe)
+			mirror_opt wan_pppoe_user "$(uci -q get network.wan.username)"
+			mirror_opt wan_pppoe_pass "$(uci -q get network.wan.password)"
+			mirror_dns "$(uci -q get network.wan.dns)"
+			;;
+		l2tp)
+			mirror_opt wan_l2tp_server "$(uci -q get network.l2tp.server)"
+			mirror_opt wan_l2tp_user "$(uci -q get network.l2tp.username)"
+			mirror_opt wan_l2tp_pass "$(uci -q get network.l2tp.password)"
+			mirror_dns "$(uci -q get network.l2tp.dns)"
+			;;
+		pptp)
+			mirror_opt wan_pptp_server "$(uci -q get network.pptp.server)"
+			mirror_opt wan_pptp_user "$(uci -q get network.pptp.username)"
+			mirror_opt wan_pptp_pass "$(uci -q get network.pptp.password)"
+			mirror_dns "$(uci -q get network.pptp.dns)"
+			;;
+		wifi)
+			mirror_opt wan_wifi_ssid "$(uci -q get wireless.wwan.ssid)"
+			mirror_opt wan_wifi_key "$(uci -q get wireless.wwan.key)"
+			mirror_opt wan_wifi_radio "$(uci -q get wireless.wwan.device)"
+			mirror_opt wan_wifi_enc "$(uci -q get wireless.wwan.encryption)"
+			mirror_dns "$(uci -q get network.wan.dns)"
+			;;
+	esac
+
+	mirror_opt lan_ipaddr "$(uci -q get network.lan.ipaddr)"
+	mirror_opt lan_netmask "$(uci -q get network.lan.netmask)"
+	mirror_opt wan_mac "$(clone_mac "$(uci -q get routersetup.default.hw_wan)")"
+
+	mirror_wifi
+
+	[ "$MIRROR_DIRTY" = "1" ] && uci commit routersetup
+}
+
+# --- apply: /etc/config/routersetup -> system configs -----------------------------
+
+APPLY_STAMP="/tmp/routersetup-applied.stamp"
+
+recently_saved() {
+	# apply only right after the UI wrote the config; this guards against
+	# re-applying stale settings on every service reload
+	[ -n "$(find /etc/config/routersetup -mmin -1 2>/dev/null)" ] || return 1
+	# ...and only once per config revision: the rpcd commit trigger and the
+	# UI's explicit "reload" both land here within a second of each other
+	[ -n "$(find "$APPLY_STAMP" -newer /etc/config/routersetup 2>/dev/null)" ] && return 1
+	return 0
+}
+
+drop_wan_ifaces() {
+	uci -q delete network.wan
+	uci -q delete network.l2tp
+	uci -q delete network.pptp
+	uci -q delete wireless.wwan
+}
+
+apply_ipv6() {
+	local cfg="$1" hw_wan="$2"
+	local want proto state_before state_after
+
+	config_get want "$cfg" ipv6 '0'
+	config_get proto "$cfg" wan_proto dhcp
+	state_before=$(sysctl -n net.ipv6.conf.all.disable_ipv6 2>/dev/null)
+
+	if [ "$want" = "1" ]; then
+		# enforce the full "IPv6 on" state even if network.wan6 already
+		# exists (factory configs ship one) - the disable branch below
+		# is just as unconditional
+		if [ -x /etc/init.d/disable_ipv6 ]; then
+			/etc/init.d/disable_ipv6 stop
+			/etc/init.d/disable_ipv6 disable
+		fi
+		sysctl -qw net.ipv6.conf.all.disable_ipv6=0
+		sysctl -qw net.ipv6.conf.default.disable_ipv6=0
+		uci -q delete dhcp.@dnsmasq[0].filter_aaaa
+		uci -q set dhcp.lan.dhcpv6='server'
+		uci -q set dhcp.lan.ra='server'
+		uci -q get dhcp.lan.ra_flags | grep -qw managed-config || \
+			uci -q add_list dhcp.lan.ra_flags='managed-config'
+		uci -q get dhcp.lan.ra_flags | grep -qw other-config || \
+			uci -q add_list dhcp.lan.ra_flags='other-config'
+		uci -q set network.wan6=interface
+		if [ "$proto" = "wifi" ]; then
+			# the uplink is a wifi sta iface, not the ethernet port:
+			# ride on whatever device the wan interface ends up with
+			uci -q set network.wan6.device='@wan'
+		else
+			uci -q set network.wan6.device="$hw_wan"
+		fi
+		uci -q set network.wan6.proto='dhcpv6'
+		uci -q set network.lan.ip6assign='60'
+	else
+		if [ -x /etc/init.d/disable_ipv6 ]; then
+			/etc/init.d/disable_ipv6 enable
+			/etc/init.d/disable_ipv6 start
+		fi
+		uci -q set dhcp.@dnsmasq[0].filter_aaaa='1'
+		uci -q delete dhcp.lan.dhcpv6
+		uci -q delete dhcp.lan.ra_flags
+		uci -q delete dhcp.lan.ra
+		uci -q delete network.wan6
+		uci -q delete network.lan.ip6assign
+	fi
+
+	state_after=$(sysctl -n net.ipv6.conf.all.disable_ipv6 2>/dev/null)
+	[ "$state_before" != "$state_after" ] && /etc/init.d/network restart
+}
+
+wan_dhcp() {
+	local cfg="$1" hw_wan="$2"
+	local hw_mac wan_mac dns
+
+	config_get hw_mac "$cfg" hw_mac
+	config_get wan_mac "$cfg" wan_mac
+	config_get dns "$cfg" wan_dns
+
+	drop_wan_ifaces
+	uci -q set network.wan=interface
+	uci -q set network.wan.device="$hw_wan"
+	uci -q set network.wan.proto='dhcp'
+	set_wan_macaddr "$hw_wan" "${wan_mac:-$hw_mac}"
+	set_iface_dns wan "$dns"
+}
+
+wan_static() {
+	local cfg="$1" hw_wan="$2"
+	local ip mask gw hw_mac wan_mac dns
+
+	config_get ip "$cfg" wan_ipaddr
+	config_get mask "$cfg" wan_netmask
+	[ -n "$ip" ] && [ -n "$mask" ] || return 0
+
+	config_get gw "$cfg" wan_gateway
+	config_get hw_mac "$cfg" hw_mac
+	config_get wan_mac "$cfg" wan_mac
+	config_get dns "$cfg" wan_dns
+
+	drop_wan_ifaces
+	uci -q set network.wan=interface
+	uci -q set network.wan.proto='static'
+	uci -q set network.wan.device="$hw_wan"
+	uci -q set network.wan.ipaddr="$ip"
+	uci -q set network.wan.netmask="$mask"
+	uci -q set network.wan.gateway="$gw"
+	set_wan_macaddr "$hw_wan" "${wan_mac:-$hw_mac}"
+	set_iface_dns wan "$dns"
+}
+
+wan_wifi() {	# uplink over another router's Wi-Fi (WISP): sta iface feeds wan
+	local cfg="$1"
+	local ssid key radio enc dns
+
+	config_get ssid "$cfg" wan_wifi_ssid
+	[ -n "$ssid" ] || return 0
+
+	config_get key "$cfg" wan_wifi_key
+	config_get radio "$cfg" wan_wifi_radio
+	config_get enc "$cfg" wan_wifi_enc
+	config_get dns "$cfg" wan_dns
+
+	[ -n "$enc" ] || enc=$([ -n "$key" ] && echo psk2 || echo none)
+	# a protected network without a key would only loop in wpa_supplicant
+	[ "$enc" != "none" ] && [ -z "$key" ] && return 0
+
+	[ -n "$radio" ] || radio=$(uci -q show wireless | \
+		sed -n "s/^wireless\.\([^.]*\)=wifi-device\$/\1/p" | head -n1)
+	[ -n "$radio" ] || return 0
+
+	drop_wan_ifaces
+	# no device option here: netifd attaches the sta wifi-iface below to
+	# this interface through its 'network' option
+	uci -q set network.wan=interface
+	uci -q set network.wan.proto='dhcp'
+
+	uci -q set wireless.wwan=wifi-iface
+	uci -q set wireless.wwan.device="$radio"
+	uci -q set wireless.wwan.mode='sta'
+	uci -q set wireless.wwan.network='wan'
+	uci -q set wireless.wwan.ssid="$ssid"
+	uci -q set wireless.wwan.encryption="$enc"
+	[ "$enc" != "none" ] && uci -q set wireless.wwan.key="$key"
+	uci -q delete "wireless.$radio.disabled"
+
+	set_iface_dns wan "$dns"
+}
+
+wan_pppoe() {
+	local cfg="$1" hw_wan="$2"
+	local user pass want6 dns
+
+	config_get user "$cfg" wan_pppoe_user
+	config_get pass "$cfg" wan_pppoe_pass
+	config_get want6 "$cfg" ipv6 '0'
+	config_get dns "$cfg" wan_dns
+
+	drop_wan_ifaces
+	uci -q set network.wan=interface
+	uci -q set network.wan.proto='pppoe'
+	uci -q set network.wan.device="$hw_wan"
+	uci -q set network.wan.username="$user"
+	uci -q set network.wan.password="$pass"
+	uci -q set network.wan.pppd_options='debug'
+	uci -q set network.wan.ipv6="$([ "$want6" = "1" ] && echo auto || echo 0)"
+	uci -q set "routersetup.default.wan_mac=$(live_mac "$hw_wan")"
+	set_iface_dns wan "$dns"
+}
+
+wan_tunnel() {	# $3 = l2tp | pptp
+	local cfg="$1" hw_wan="$2" kind="$3"
+	local server user pass want6 dns mac
+
+	config_get server "$cfg" "wan_${kind}_server"
+	config_get user "$cfg" "wan_${kind}_user"
+	config_get pass "$cfg" "wan_${kind}_pass"
+	config_get want6 "$cfg" ipv6 '0'
+	config_get dns "$cfg" wan_dns
+	mac=$(live_mac "$hw_wan")
+
+	# a PPPoE or Wi-Fi-station uplink cannot serve as the tunnel transport
+	# as-is: rebuild a plain DHCP ethernet wan (dropping the sta) underneath
+	if [ "$(uci -q get network.wan.proto)" = "pppoe" ] || \
+	   [ -n "$(uci -q get wireless.wwan)" ]; then
+		local hw_mac
+		config_get hw_mac "$cfg" hw_mac
+		uci -q delete wireless.wwan
+		uci -q delete network.wan
+		uci -q set network.wan=interface
+		uci -q set network.wan.device="$hw_wan"
+		uci -q set network.wan.proto='dhcp'
+		set_wan_macaddr "$hw_wan" "${mac:-$hw_mac}"
+	fi
+	uci -q delete network.wan.dns
+	uci -q delete network.wan.peerdns
+	uci -q delete network.l2tp
+	uci -q delete network.pptp
+
+	uci -q set "network.$kind=interface"
+	uci -q set "network.$kind.proto=$kind"
+	uci -q set "network.$kind.server=$server"
+	uci -q set "network.$kind.username=$user"
+	uci -q set "network.$kind.password=$pass"
+	uci -q set "network.$kind.mtu=1460"
+	uci -q set "network.$kind.ipv6=$([ "$want6" = "1" ] && echo auto || echo 0)"
+	uci -q set network.wan.metric='1'
+	uci -q set "routersetup.default.wan_mac=$mac"
+	set_iface_dns "$kind" "$dns"
+}
+
+apply_wan() {
+	local cfg="$1" hw_wan="$2"
+	local proto
+
+	config_get proto "$cfg" wan_proto dhcp
+	case "$proto" in
+		dhcp)   wan_dhcp "$cfg" "$hw_wan" ;;
+		static) wan_static "$cfg" "$hw_wan" ;;
+		pppoe)  wan_pppoe "$cfg" "$hw_wan" ;;
+		l2tp)   wan_tunnel "$cfg" "$hw_wan" l2tp ;;
+		pptp)   wan_tunnel "$cfg" "$hw_wan" pptp ;;
+		wifi)   wan_wifi "$cfg" ;;
+	esac
+}
+
+mask_to_prefix() {	# 255.255.255.0 -> 24
+	local octet prefix=0 IFS=.
+	for octet in $1; do
+		case "$octet" in
+			255) prefix=$((prefix + 8)) ;;
+			254) prefix=$((prefix + 7)) ;;
+			252) prefix=$((prefix + 6)) ;;
+			248) prefix=$((prefix + 5)) ;;
+			240) prefix=$((prefix + 4)) ;;
+			224) prefix=$((prefix + 3)) ;;
+			192) prefix=$((prefix + 2)) ;;
+			128) prefix=$((prefix + 1)) ;;
+		esac
+	done
+	echo "$prefix"
+}
+
+apply_lan() {
+	local cfg="$1" ip mask prefix
+
+	config_get ip "$cfg" lan_ipaddr
+	[ -n "$ip" ] || return 0
+	config_get mask "$cfg" lan_netmask
+
+	# always write the address in CIDR form: netifd treats a bare address
+	# without a netmask option as /32, which silently breaks DHCP on lan
+	case "$ip" in
+		*/*) prefix="${ip##*/}" ;;
+		*)   prefix=$(mask_to_prefix "${mask:-255.255.255.0}") ;;
+	esac
+
+	uci -q delete dhcp.lan.ignore
+	uci -q set network.lan.proto='static'
+	uci -q delete network.lan.ipaddr
+	uci -q delete network.lan.netmask
+	uci -q set network.lan.ipaddr="${ip%%/*}/$prefix"
+}
+
+apply_wifi() {
+	local cfg="$1"
+	local unify ssid key ssid2 key2 ssid5 key5 sec
+
+	config_get ssid "$cfg" wifi_ssid
+	config_get ssid2 "$cfg" wifi_ssid2
+	config_get ssid5 "$cfg" wifi_ssid5
+	[ -n "$ssid$ssid2$ssid5" ] || return 0
+
+	config_get unify "$cfg" unify_ssid
+	config_get key "$cfg" wifi_key
+	config_get key2 "$cfg" wifi_key2
+	config_get key5 "$cfg" wifi_key5
+
+	for sec in $(uci -q show wireless | sed -n "s/^wireless\.\([^.]*\)=wifi-iface\$/\1/p"); do
+		[ "$(uci -q get "wireless.$sec.mode")" = "ap" ] || continue
+
+		local radio band enc
+		radio=$(uci -q get "wireless.$sec.device")
+		band=$(uci -q get "wireless.$radio.band")
+		band=${band%g}
+
+		uci -q delete "wireless.$radio.disabled"
+		[ -z "$(uci -q get "wireless.$radio.country")" ] && \
+			uci -q set "wireless.$radio.country=RU"
+		uci -q set "wireless.$radio.cell_density=0"
+
+		if [ "$unify" = "1" ]; then
+			uci -q set "wireless.$sec.ssid=$ssid"
+			uci -q set "wireless.$sec.key=$key"
+		else
+			eval "uci -q set \"wireless.$sec.ssid=\$ssid$band\""
+			eval "uci -q set \"wireless.$sec.key=\$key$band\""
+		fi
+
+		enc=$(uci -q get "wireless.$sec.encryption")
+		case "$enc" in
+			''|none) uci -q set "wireless.$sec.encryption=psk2" ;;
+		esac
+
+		# drop WPS/roaming extras earlier versions used to set: on
+		# wpad-basic builds an unsupported key (e.g. wps_state) makes
+		# hostapd reject the whole config and the AP never comes up
+		local opt
+		for opt in wps_pushbutton ieee80211r ieee80211k ft_over_ds \
+				ft_psk_generate_local pmk_r1_push \
+				bss_transition proxy_arp; do
+			uci -q delete "wireless.$sec.$opt"
+		done
+	done
+}
+
+apply_profile() {
+	local cfg="$1"
+	local hw_wan unify key key2 key5
+
+	[ -n "$ROUTERSETUP_BOOTING" ] && return 0
+	recently_saved || return 0
+
+	config_get unify "$cfg" unify_ssid
+	config_get key "$cfg" wifi_key
+	config_get key2 "$cfg" wifi_key2
+	config_get key5 "$cfg" wifi_key5
+
+	# Не разворачиваем открытый (беспарольный) Wi-Fi. Требуем пароль ТОЛЬКО для
+	# диапазонов, которые на этой плате реально есть: раньше проверялись оба
+	# (key2 И key5) безусловно, поэтому на однодиапазонном роутере (и на плате
+	# вообще без Wi-Fi) пустой key5 обрывал apply_profile целиком - молча, ещё
+	# до WAN и LAN. То есть мастер «срабатывал», но не применял НИЧЕГО.
+	local bands b k
+	bands=$(wifi_ap_bands)
+	if [ -n "$bands" ]; then
+		if [ "$unify" = "1" ]; then
+			[ -z "$key" ] && return 0
+		else
+			for b in $bands; do
+				eval "k=\$key$b"
+				[ -z "$k" ] && return 0
+			done
+		fi
+	fi
+
+	config_get hw_wan "$cfg" hw_wan
+
+	apply_ipv6 "$cfg" "$hw_wan"
+	apply_wan "$cfg" "$hw_wan"
+	apply_lan "$cfg"
+	apply_wifi "$cfg"
+
+	uci commit routersetup
+	uci commit dhcp
+	uci commit network
+	uci commit wireless
+	touch "$APPLY_STAMP"
+
+	# let the UI answer the browser before connectivity blips
+	(
+		sleep 15
+		/etc/init.d/network reload
+		/etc/init.d/dnsmasq reload
+	) &
+}
+
+# --- service glue --------------------------------------------------------------
+
+boot() {
+	ROUTERSETUP_BOOTING=1
+	mirror_system
+	start "$@"
+}
+
+start_service() {
+	# the LuCI menu cache bakes in uci-dependency results (hide_menu), so
+	# drop it whenever our config changes - the menu entry then appears or
+	# disappears on the next page load, no reboot needed
+	rm -f /tmp/luci-indexcache*
+
+	config_load routersetup
+	config_foreach apply_profile routersetup
+}
+
+service_triggers() {
+	procd_add_reload_trigger "routersetup"
+}

@@ -1,0 +1,91 @@
+name: Build packages
+
+# Пакет собирается с LUCI_PKGARCH:=all (не зависит от архитектуры), поэтому
+# достаточно ОДНОЙ сборки на формат пакета - результат ставится на любое железо:
+#   - SDK 24.10 даёт .ipk (там ещё opkg по умолчанию)
+#   - SDK SNAPSHOT даёт .apk
+# По тегу вида v* артефакты прикрепляются к GitHub Release; запустить сборку
+# можно и вручную со вкладки Actions (workflow_dispatch).
+
+on:
+  push:
+    tags:
+      - 'v*'
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  build:
+    name: ${{ matrix.arch }}
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        # <target_arch>-<openwrt_version>. x86_64 - только СБОРЩИК;
+        # сам пакет архитектурно-независим и ставится куда угодно.
+        arch:
+          - x86_64-24.10.7   # -> .ipk
+          - x86_64-SNAPSHOT  # -> .apk
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Build with OpenWrt SDK
+        uses: openwrt/gh-action-sdk@main
+        env:
+          ARCH: ${{ matrix.arch }}
+          FEEDNAME: routersetup
+          PACKAGES: luci-app-router-setup
+          NO_REFRESH_CHECK: 1
+          # пер-пакетные логи в logs/, чтобы падение было диагностируемым
+          BUILD_LOG: 1
+          MAKEFLAGS: -j2
+          V: s
+
+      # При падении показываем НАСТОЯЩУЮ ошибку: верхнеуровневая "Error 2"
+      # бесполезна, полезна первая падающая строка в логе пакета.
+      - name: Show failing build log
+        if: failure()
+        run: |
+          echo "::group::failing package logs"
+          found=0
+          for f in $(find logs -name '*.txt' 2>/dev/null); do
+            if grep -qiE 'Error [0-9]|: error:|ERROR:|collect2|No such file' "$f"; then
+              echo "----------------- $f -----------------"
+              tail -n 80 "$f"
+              found=1
+            fi
+          done
+          [ "$found" = 1 ] || echo "no package log with an obvious error was found under logs/"
+          echo "::endgroup::"
+          tar -czf build-logs.tar.gz logs 2>/dev/null || true
+
+      - name: Upload build logs
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: build-logs-${{ matrix.arch }}
+          path: build-logs.tar.gz
+          if-no-files-found: ignore
+
+      - name: Collect packages
+        run: |
+          mkdir -p out
+          find bin/ -type f \( -name '*router-setup*.ipk' -o -name '*router-setup*.apk' \) -exec cp -v {} out/ \;
+          echo "--- collected ---"; ls -l out/
+
+      - name: Upload build artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: luci-app-router-setup-${{ matrix.arch }}
+          path: out/*
+          if-no-files-found: error
+
+      - name: Attach to release
+        if: startsWith(github.ref, 'refs/tags/v')
+        uses: softprops/action-gh-release@v2
+        with:
+          files: out/*
+          fail_on_unmatched_files: false

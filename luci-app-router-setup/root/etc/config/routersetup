@@ -1,0 +1,8 @@
+
+config routersetup 'default'
+	option wan_proto 'dhcp'
+	option ipv6 '0'
+	option unify_ssid '0'
+	option hide_menu '0'
+	option wifi_ssid2 'wwGate-2.4G'
+	option wifi_ssid5 'wwGate-5G'

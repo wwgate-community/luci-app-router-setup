@@ -1,0 +1,238 @@
+msgid ""
+msgstr "Content-Type: text/plain; charset=UTF-8"
+
+#: root/usr/share/luci/menu.d/luci-app-router-setup.json:3
+msgid "Quick Setup"
+msgstr ""
+
+#: htdocs/luci-static/resources/view/routersetup/setup.js
+msgid "Protocol"
+msgstr ""
+
+#: htdocs/luci-static/resources/view/routersetup/setup.js
+msgid "DHCP client"
+msgstr ""
+
+#: htdocs/luci-static/resources/view/routersetup/setup.js
+msgid "Static address"
+msgstr ""
+
+#: htdocs/luci-static/resources/view/routersetup/setup.js
+msgid "PPPoE"
+msgstr ""
+
+#: htdocs/luci-static/resources/view/routersetup/setup.js
+msgid "L2TP"
+msgstr ""
+
+#: htdocs/luci-static/resources/view/routersetup/setup.js
+msgid "PPTP"
+msgstr ""
+
+#: htdocs/luci-static/resources/view/routersetup/setup.js
+msgid "MAC Address"
+msgstr ""
+
+#: htdocs/luci-static/resources/view/routersetup/setup.js
+msgid "Clone MAC if required by your provider"
+msgstr ""
+
+#: htdocs/luci-static/resources/view/routersetup/setup.js
+msgid "IP address"
+msgstr ""
+
+#: htdocs/luci-static/resources/view/routersetup/setup.js
+msgid "Netmask"
+msgstr ""
+
+#: htdocs/luci-static/resources/view/routersetup/setup.js
+msgid "Gateway"
+msgstr ""
+
+#: htdocs/luci-static/resources/view/routersetup/setup.js
+msgid "Username"
+msgstr ""
+
+#: htdocs/luci-static/resources/view/routersetup/setup.js
+msgid "Password"
+msgstr ""
+
+#: htdocs/luci-static/resources/view/routersetup/setup.js
+msgid "Use custom DNS servers"
+msgstr ""
+
+#: htdocs/luci-static/resources/view/routersetup/setup.js
+msgid "Leave empty to obtain automatically from the provider"
+msgstr ""
+
+#: htdocs/luci-static/resources/view/routersetup/setup.js
+msgid "Enable IPv6"
+msgstr ""
+
+#: htdocs/luci-static/resources/view/routersetup/setup.js
+msgid "Server"
+msgstr ""
+
+#: htdocs/luci-static/resources/view/routersetup/setup.js
+msgid "Router IP address"
+msgstr ""
+
+#: htdocs/luci-static/resources/view/routersetup/setup.js
+msgid "Same name for both Wi‑Fi bands"
+msgstr ""
+
+#: htdocs/luci-static/resources/view/routersetup/setup.js
+msgid "Wi-Fi network name"
+msgstr ""
+
+#: htdocs/luci-static/resources/view/routersetup/setup.js
+msgid "Wi-Fi Password"
+msgstr ""
+
+#: htdocs/luci-static/resources/view/routersetup/setup.js
+msgid "Wi-Fi 2.4Ghz network name"
+msgstr ""
+
+#: htdocs/luci-static/resources/view/routersetup/setup.js
+msgid "Wi-Fi 2.4Ghz Password"
+msgstr ""
+
+#: htdocs/luci-static/resources/view/routersetup/setup.js
+msgid "Wi-Fi 5Ghz network name"
+msgstr ""
+
+#: htdocs/luci-static/resources/view/routersetup/setup.js
+msgid "Wi-Fi 5Ghz Password"
+msgstr ""
+
+#: htdocs/luci-static/resources/view/routersetup/setup.js
+msgid "Wi-Fi from another router"
+msgstr ""
+
+#: htdocs/luci-static/resources/view/routersetup/setup.js
+msgid "Wi-Fi network to connect to"
+msgstr ""
+
+#: htdocs/luci-static/resources/view/routersetup/setup.js
+msgid "The network of the other router that shares its internet"
+msgstr ""
+
+#: htdocs/luci-static/resources/view/routersetup/setup.js
+msgid "Password of that network"
+msgstr ""
+
+#: htdocs/luci-static/resources/view/routersetup/setup.js
+msgid "Leave empty for an open network"
+msgstr ""
+
+#: htdocs/luci-static/resources/view/routersetup/setup.js
+msgid "Search for networks…"
+msgstr ""
+
+#: htdocs/luci-static/resources/view/routersetup/setup.js
+msgid "Searching for Wi-Fi networks…"
+msgstr ""
+
+#: htdocs/luci-static/resources/view/routersetup/setup.js
+msgid "Scanning the air, this takes a few seconds…"
+msgstr ""
+
+#: htdocs/luci-static/resources/view/routersetup/setup.js
+msgid "Select a Wi-Fi network"
+msgstr ""
+
+#: htdocs/luci-static/resources/view/routersetup/setup.js
+msgid "No networks found. Make sure the other router is powered on and in range."
+msgstr ""
+
+#: htdocs/luci-static/resources/view/routersetup/setup.js
+msgid "This network is protected — enter its password"
+msgstr ""
+
+#: htdocs/luci-static/resources/view/routersetup/setup.js
+msgid "Network"
+msgstr ""
+
+#: htdocs/luci-static/resources/view/routersetup/setup.js
+msgid "Band"
+msgstr ""
+
+#: htdocs/luci-static/resources/view/routersetup/setup.js
+msgid "Signal"
+msgstr ""
+
+#: htdocs/luci-static/resources/view/routersetup/setup.js
+msgid "Security"
+msgstr ""
+
+#: htdocs/luci-static/resources/view/routersetup/setup.js
+msgid "Open"
+msgstr ""
+
+#: htdocs/luci-static/resources/view/routersetup/setup.js
+msgid "2.4 GHz"
+msgstr ""
+
+#: htdocs/luci-static/resources/view/routersetup/setup.js
+msgid "5 GHz"
+msgstr ""
+
+#: htdocs/luci-static/resources/view/routersetup/setup.js
+msgid "Cancel"
+msgstr ""
+
+#: htdocs/luci-static/resources/view/routersetup/setup.js
+msgid "Hide from menu"
+msgstr ""
+
+#: htdocs/luci-static/resources/view/routersetup/setup.js
+msgid "Remove the Quick Setup entry from the LuCI menu. To bring it back, open System → Quick Setup."
+msgstr ""
+
+#: htdocs/luci-static/resources/view/routersetup/restore.js
+msgid "The Quick Setup wizard is currently hidden from the LuCI menu."
+msgstr ""
+
+#: htdocs/luci-static/resources/view/routersetup/restore.js
+msgid "Uncheck and apply to bring Quick Setup back to the main menu."
+msgstr ""
+
+#: htdocs/luci-static/resources/view/routersetup/setup.js
+msgid "Initial Router Setup"
+msgstr ""
+
+#: htdocs/luci-static/resources/view/routersetup/setup.js
+msgid "Here you can perform a simple initial setup of your router."
+msgstr ""
+
+#: htdocs/luci-static/resources/view/routersetup/setup.js
+msgid "Here you can perform a simple initial setup of your %s"
+msgstr ""
+
+#: htdocs/luci-static/resources/view/routersetup/setup.js
+msgid "Internet"
+msgstr ""
+
+#: htdocs/luci-static/resources/view/routersetup/setup.js
+msgid "Select the protocol that matches your provider settings."
+msgstr ""
+
+#: htdocs/luci-static/resources/view/routersetup/setup.js
+msgid "Network"
+msgstr ""
+
+#: htdocs/luci-static/resources/view/routersetup/setup.js
+msgid "Specify the router IP address"
+msgstr ""
+
+#: htdocs/luci-static/resources/view/routersetup/setup.js
+msgid "Wi-Fi"
+msgstr ""
+
+#: htdocs/luci-static/resources/view/routersetup/setup.js
+msgid "Set the desired Wi-Fi name and password."
+msgstr ""
+
+#: htdocs/luci-static/resources/view/routersetup/setup.js
+msgid "Options"
+msgstr ""

@@ -1,0 +1,27 @@
+{
+	"admin/routersetup": {
+		"title": "Quick Setup",
+		"order": 1,
+		"action": {
+			"type": "view",
+			"path": "routersetup/setup"
+		},
+		"depends": {
+			"acl": [ "luci-app-router-setup" ],
+			"uci": { "routersetup": { "default": { "hide_menu": "0" } } }
+		}
+	},
+
+	"admin/system/routersetup": {
+		"title": "Quick Setup",
+		"order": 90,
+		"action": {
+			"type": "view",
+			"path": "routersetup/restore"
+		},
+		"depends": {
+			"acl": [ "luci-app-router-setup" ],
+			"uci": { "routersetup": { "default": { "hide_menu": "1" } } }
+		}
+	}
+}

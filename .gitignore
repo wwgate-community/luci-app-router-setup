@@ -1,0 +1,18 @@
+# Скомпилированные каталоги переводов не версионируем...
+*.lmo
+# ...кроме русского: он ЗАКОММИЧЕН намеренно и едет внутри пакета.
+# Build/Prepare лишь освежает его при сборке и не фатален - если в чужом
+# feed/CI не окажется po2lmo, в пакет попадёт этот файл, а не пустота.
+# После правки po-ru/router-setup.po обязательно пересобрать:
+#   po2lmo po-ru/router-setup.po \
+#     luci-app-router-setup/root/usr/share/router-setup/i18n/router-setup.ru.lmo
+!luci-app-router-setup/root/usr/share/router-setup/i18n/router-setup.ru.lmo
+
+# мусор редакторов/сборки
+*.swp
+*~
+.DS_Store
+/bin/
+/build_dir/
+/staging_dir/
+/tmp/

@@ -1,0 +1,22 @@
+{
+	"luci-app-router-setup": {
+		"description": "Grant UCI access for luci-app-router-setup",
+		"read": {
+			"ubus": {
+				"session": [ "list" ],
+				"system": [ "board" ],
+				"network.device": [ "status" ],
+				"network.interface": [ "status" ],
+				"iwinfo": [ "devices", "info", "scan" ],
+				"uci": [ "get" ]
+			},
+			"uci": [ "routersetup", "wireless", "network" ]
+		},
+		"write": {
+			"ubus": {
+				"uci": [ "set", "add", "add_list", "delete", "commit", "apply" ]
+			},
+			"uci": [ "routersetup", "wireless", "network" ]
+		}
+	}
+}

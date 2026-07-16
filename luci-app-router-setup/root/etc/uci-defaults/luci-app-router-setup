@@ -1,0 +1,58 @@
+#!/bin/sh
+
+rm -f /tmp/luci-indexcache*
+if [ -f /usr/share/ucitrack/luci-app-router-setup.json ]; then
+	rm -f /usr/share/ucitrack/luci-app-router-setup.json
+	/etc/init.d/ucitrack restart
+fi
+/etc/init.d/rpcd reload
+
+# Переносим настройки с прежнего имени пакета (sysupgrade с сохранением конфига):
+# "wwsetup" - как этот пакет назывался раньше.
+if [ -f /etc/config/wwsetup ] && [ -z "$(uci -q get routersetup.default.hw_wan)" ]; then
+	sed 's/^config wwsetup/config routersetup/' \
+	    /etc/config/wwsetup > /etc/config/routersetup
+	rm -f /etc/config/wwsetup
+fi
+
+# The menu entry is shown only while hide_menu is '0' - make sure the
+# option exists (older/migrated configs may lack it)
+[ -n "$(uci -q get routersetup.default.hide_menu)" ] || \
+	uci -q set routersetup.default.hide_menu='0'
+
+# Detect the WAN hardware port (not hardcoded per board)
+if [ -z "$(uci -q get routersetup.default.hw_wan)" ]; then
+	wan_dev=$(uci -q get network.wan.device)
+	[ -z "$wan_dev" ] && wan_dev=$(uci -q get network.wan.ifname)
+	[ -n "$wan_dev" ] && uci -q set routersetup.default.hw_wan="$wan_dev"
+fi
+
+hw_wan=$(uci -q get routersetup.default.hw_wan)
+if [ -z "$(uci -q get routersetup.default.hw_mac)" ] && [ -n "$hw_wan" ]; then
+	mac=$(cat "/sys/class/net/$hw_wan/address" 2>/dev/null)
+	[ -n "$mac" ] && uci -q set routersetup.default.hw_mac="$mac"
+fi
+uci commit routersetup
+
+ipv6=$(uci -q get routersetup.default.ipv6)
+disableipv6=/etc/init.d/disable_ipv6
+
+cat <<EOF >"$disableipv6"
+#!/bin/sh /etc/rc.common
+
+START=11
+
+start() {
+	sysctl -qw net.ipv6.conf.all.disable_ipv6=1
+	sysctl -qw net.ipv6.conf.default.disable_ipv6=1
+}
+EOF
+
+chmod +x "$disableipv6"
+
+if [ "$ipv6" = "0" ]; then
+	ln -s ../init.d/disable_ipv6 /etc/rc.d/S11disable_ipv6 2>/dev/null
+	/etc/init.d/disable_ipv6 start
+fi
+
+exit 0
