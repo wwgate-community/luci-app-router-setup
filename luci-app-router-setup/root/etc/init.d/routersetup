@@ -1,23 +1,12 @@
 #!/bin/sh /etc/rc.common
-# wwGate quick-setup service.
-#
-# Responsibilities:
-#   boot   - mirror the live network/wireless state into /etc/config/routersetup
-#            so the setup UI always presents current values;
-#   reload - push /etc/config/routersetup back into network/wireless/dhcp, but
-#            only when the config was written moments ago by the setup UI.
 
 USE_PROCD=1
 START=99
 
-# --- helpers -----------------------------------------------------------------
-
-# uci section id of the network device section whose name is $1
 device_section() {
 	uci -q show network | sed -n "s/^network\.\([^.]*\)\.name='$1'\$/\1/p" | head -n1
 }
 
-# current MAC of interface $1: a uci macaddr override wins over sysfs
 live_mac() {
 	local sec mac
 	sec=$(device_section "$1")
@@ -26,27 +15,16 @@ live_mac() {
 	echo "$mac"
 }
 
-# user-set MAC-clone override for interface $1, if any. Unlike live_mac() this
-# never falls back to the sysfs address: right after boot the driver may still
-# report a temporary MAC there, and mirroring that into the wizard makes it show
-# a bogus address until the link settles.
 clone_mac() {
 	local sec
 	sec=$(device_section "$1")
 	[ -n "$sec" ] && uci -q get "network.$sec.macaddr"
 }
 
-set_wan_macaddr() {	# $1 = interface name, $2 = mac
+set_wan_macaddr() {
 	local sec
 	[ -n "$1" ] && [ -n "$2" ] || return 0
 	sec=$(device_section "$1")
-	# Секции device для WAN-порта в типовом конфиге ПРОСТО НЕТ: там объявлен
-	# только br-lan, а wan описан как `interface` с `option device 'eth1'`.
-	# Раньше в этом случае device_section возвращала пусто, и функция молча
-	# выходила - MAC не применялся вообще (сохранялся лишь в routersetup).
-	# Поэтому недостающую секцию создаём. Именно device-секция, а не
-	# `network.wan.macaddr`: на interface-секции netifd считает опцию устаревшей,
-	# и её всё равно затирает drop_wan_ifaces() при следующем применении.
 	if [ -z "$sec" ]; then
 		sec=$(uci -q add network device) || return 0
 		uci -q set "network.$sec.name=$1"
@@ -54,17 +32,15 @@ set_wan_macaddr() {	# $1 = interface name, $2 = mac
 	uci -q set "network.$sec.macaddr=$2"
 }
 
-set_iface_dns() {	# $1 = interface section, $2 = space-separated resolvers
+set_iface_dns() {
 	[ -n "$2" ] || return 0
 	uci -q set "network.$1.peerdns=0"
 	uci -q set "network.$1.dns=$2"
 }
 
-# --- mirror: live system state -> /etc/config/routersetup ------------------------
-
 MIRROR_DIRTY=0
 
-mirror_opt() {	# $1 = routersetup option, $2 = value; an empty value deletes
+mirror_opt() {
 	[ "$(uci -q get "routersetup.default.$1")" = "$2" ] && return 0
 	if [ -n "$2" ]; then
 		uci -q set "routersetup.default.$1=$2"
@@ -74,7 +50,7 @@ mirror_opt() {	# $1 = routersetup option, $2 = value; an empty value deletes
 	MIRROR_DIRTY=1
 }
 
-mirror_dns() {	# $1 = space-separated resolver list
+mirror_dns() {
 	[ "$(uci -q get routersetup.default.wan_dns)" = "$1" ] && return 0
 	uci -q delete routersetup.default.wan_dns
 	local d
@@ -84,7 +60,7 @@ mirror_dns() {	# $1 = space-separated resolver list
 	MIRROR_DIRTY=1
 }
 
-proto_opts() {	# routersetup options meaningful only for WAN protocol $1
+proto_opts() {
 	case "$1" in
 		static) echo "wan_ipaddr wan_netmask wan_gateway" ;;
 		pppoe)  echo "wan_pppoe_user wan_pppoe_pass" ;;
@@ -94,10 +70,6 @@ proto_opts() {	# routersetup options meaningful only for WAN protocol $1
 	esac
 }
 
-# Диапазоны, у которых реально есть AP-интерфейс: "2", "5", "6" (может быть пусто).
-# Считаем по band радиоустройства, а НЕ по порядку секций: @wifi-iface[0]/[1] -
-# это допущение «ровно два радио, первое 2.4, второе 5», которое ломается на
-# однодиапазонных платах, на 6 ГГц и при нескольких AP на одном радио.
 wifi_ap_bands() {
 	local sec radio band out=""
 	for sec in $(uci -q show wireless | sed -n "s/^wireless\.\([^.]*\)=wifi-iface\$/\1/p"); do
@@ -111,8 +83,7 @@ wifi_ap_bands() {
 	echo $out
 }
 
-# ssid/key первого AP-интерфейса заданного диапазона
-wifi_band_opt() {	# $1 = band (2/5/6), $2 = ssid|key
+wifi_band_opt() {
 	local sec radio band
 	for sec in $(uci -q show wireless | sed -n "s/^wireless\.\([^.]*\)=wifi-iface\$/\1/p"); do
 		[ "$(uci -q get "wireless.$sec.mode")" = "ap" ] || continue
@@ -129,9 +100,6 @@ mirror_wifi() {
 	bands=$(wifi_ap_bands)
 	set -- $bands; nb=$#
 
-	# 0 или 1 диапазон -> в мастере ОДИН комплект полей (режим общего SSID).
-	# Иначе он показывал бы «пароль 5 ГГц» на однодиапазонной плате, поле
-	# оставалось пустым, и apply_profile молча отказывался применять ВСЁ.
 	if [ "$nb" -le 1 ]; then
 		s=$(wifi_band_opt "${1:-2}" ssid)
 		k=$(wifi_band_opt "${1:-2}" key)
@@ -173,14 +141,12 @@ mirror_system() {
 	local proto other opt
 	proto=$(uci -q get network.wan.proto)
 
-	# a sta wifi-iface feeding wan means the uplink is another router's Wi-Fi
 	if [ "$(uci -q get wireless.wwan.mode)" = "sta" ] && \
 	   [ "$(uci -q get wireless.wwan.network)" = "wan" ]; then
 		proto="wifi"
 	fi
 	mirror_opt wan_proto "$proto"
 
-	# drop leftovers from protocols other than the active one
 	for other in static pppoe l2tp pptp wifi; do
 		[ "$other" = "$proto" ] && continue
 		for opt in $(proto_opts "$other"); do
@@ -233,16 +199,10 @@ mirror_system() {
 	[ "$MIRROR_DIRTY" = "1" ] && uci commit routersetup
 }
 
-# --- apply: /etc/config/routersetup -> system configs -----------------------------
-
 APPLY_STAMP="/tmp/routersetup-applied.stamp"
 
 recently_saved() {
-	# apply only right after the UI wrote the config; this guards against
-	# re-applying stale settings on every service reload
 	[ -n "$(find /etc/config/routersetup -mmin -1 2>/dev/null)" ] || return 1
-	# ...and only once per config revision: the rpcd commit trigger and the
-	# UI's explicit "reload" both land here within a second of each other
 	[ -n "$(find "$APPLY_STAMP" -newer /etc/config/routersetup 2>/dev/null)" ] && return 1
 	return 0
 }
@@ -263,9 +223,6 @@ apply_ipv6() {
 	state_before=$(sysctl -n net.ipv6.conf.all.disable_ipv6 2>/dev/null)
 
 	if [ "$want" = "1" ]; then
-		# enforce the full "IPv6 on" state even if network.wan6 already
-		# exists (factory configs ship one) - the disable branch below
-		# is just as unconditional
 		if [ -x /etc/init.d/disable_ipv6 ]; then
 			/etc/init.d/disable_ipv6 stop
 			/etc/init.d/disable_ipv6 disable
@@ -281,8 +238,6 @@ apply_ipv6() {
 			uci -q add_list dhcp.lan.ra_flags='other-config'
 		uci -q set network.wan6=interface
 		if [ "$proto" = "wifi" ]; then
-			# the uplink is a wifi sta iface, not the ethernet port:
-			# ride on whatever device the wan interface ends up with
 			uci -q set network.wan6.device='@wan'
 		else
 			uci -q set network.wan6.device="$hw_wan"
@@ -346,7 +301,7 @@ wan_static() {
 	set_iface_dns wan "$dns"
 }
 
-wan_wifi() {	# uplink over another router's Wi-Fi (WISP): sta iface feeds wan
+wan_wifi() {
 	local cfg="$1"
 	local ssid key radio enc dns
 
@@ -359,7 +314,6 @@ wan_wifi() {	# uplink over another router's Wi-Fi (WISP): sta iface feeds wan
 	config_get dns "$cfg" wan_dns
 
 	[ -n "$enc" ] || enc=$([ -n "$key" ] && echo psk2 || echo none)
-	# a protected network without a key would only loop in wpa_supplicant
 	[ "$enc" != "none" ] && [ -z "$key" ] && return 0
 
 	[ -n "$radio" ] || radio=$(uci -q show wireless | \
@@ -367,8 +321,6 @@ wan_wifi() {	# uplink over another router's Wi-Fi (WISP): sta iface feeds wan
 	[ -n "$radio" ] || return 0
 
 	drop_wan_ifaces
-	# no device option here: netifd attaches the sta wifi-iface below to
-	# this interface through its 'network' option
 	uci -q set network.wan=interface
 	uci -q set network.wan.proto='dhcp'
 
@@ -405,7 +357,7 @@ wan_pppoe() {
 	set_iface_dns wan "$dns"
 }
 
-wan_tunnel() {	# $3 = l2tp | pptp
+wan_tunnel() {
 	local cfg="$1" hw_wan="$2" kind="$3"
 	local server user pass want6 dns mac
 
@@ -416,8 +368,6 @@ wan_tunnel() {	# $3 = l2tp | pptp
 	config_get dns "$cfg" wan_dns
 	mac=$(live_mac "$hw_wan")
 
-	# a PPPoE or Wi-Fi-station uplink cannot serve as the tunnel transport
-	# as-is: rebuild a plain DHCP ethernet wan (dropping the sta) underneath
 	if [ "$(uci -q get network.wan.proto)" = "pppoe" ] || \
 	   [ -n "$(uci -q get wireless.wwan)" ]; then
 		local hw_mac
@@ -461,7 +411,7 @@ apply_wan() {
 	esac
 }
 
-mask_to_prefix() {	# 255.255.255.0 -> 24
+mask_to_prefix() {
 	local octet prefix=0 IFS=.
 	for octet in $1; do
 		case "$octet" in
@@ -485,8 +435,6 @@ apply_lan() {
 	[ -n "$ip" ] || return 0
 	config_get mask "$cfg" lan_netmask
 
-	# always write the address in CIDR form: netifd treats a bare address
-	# without a netmask option as /32, which silently breaks DHCP on lan
 	case "$ip" in
 		*/*) prefix="${ip##*/}" ;;
 		*)   prefix=$(mask_to_prefix "${mask:-255.255.255.0}") ;;
@@ -526,22 +474,25 @@ apply_wifi() {
 			uci -q set "wireless.$radio.country=RU"
 		uci -q set "wireless.$radio.cell_density=0"
 
+		local want_ssid want_key
 		if [ "$unify" = "1" ]; then
-			uci -q set "wireless.$sec.ssid=$ssid"
-			uci -q set "wireless.$sec.key=$key"
+			want_ssid="$ssid"
+			want_key="$key"
 		else
-			eval "uci -q set \"wireless.$sec.ssid=\$ssid$band\""
-			eval "uci -q set \"wireless.$sec.key=\$key$band\""
+			eval "want_ssid=\$ssid$band"
+			eval "want_key=\$key$band"
 		fi
+
+		[ -n "$want_ssid" ] || continue
+
+		uci -q set "wireless.$sec.ssid=$want_ssid"
+		uci -q set "wireless.$sec.key=$want_key"
 
 		enc=$(uci -q get "wireless.$sec.encryption")
 		case "$enc" in
 			''|none) uci -q set "wireless.$sec.encryption=psk2" ;;
 		esac
 
-		# drop WPS/roaming extras earlier versions used to set: on
-		# wpad-basic builds an unsupported key (e.g. wps_state) makes
-		# hostapd reject the whole config and the AP never comes up
 		local opt
 		for opt in wps_pushbutton ieee80211r ieee80211k ft_over_ds \
 				ft_psk_generate_local pmk_r1_push \
@@ -563,11 +514,6 @@ apply_profile() {
 	config_get key2 "$cfg" wifi_key2
 	config_get key5 "$cfg" wifi_key5
 
-	# Не разворачиваем открытый (беспарольный) Wi-Fi. Требуем пароль ТОЛЬКО для
-	# диапазонов, которые на этой плате реально есть: раньше проверялись оба
-	# (key2 И key5) безусловно, поэтому на однодиапазонном роутере (и на плате
-	# вообще без Wi-Fi) пустой key5 обрывал apply_profile целиком - молча, ещё
-	# до WAN и LAN. То есть мастер «срабатывал», но не применял НИЧЕГО.
 	local bands b k
 	bands=$(wifi_ap_bands)
 	if [ -n "$bands" ]; then
@@ -575,6 +521,7 @@ apply_profile() {
 			[ -z "$key" ] && return 0
 		else
 			for b in $bands; do
+				case "$b" in 2|5) ;; *) continue ;; esac
 				eval "k=\$key$b"
 				[ -z "$k" ] && return 0
 			done
@@ -594,15 +541,12 @@ apply_profile() {
 	uci commit wireless
 	touch "$APPLY_STAMP"
 
-	# let the UI answer the browser before connectivity blips
 	(
 		sleep 15
 		/etc/init.d/network reload
 		/etc/init.d/dnsmasq reload
 	) &
 }
-
-# --- service glue --------------------------------------------------------------
 
 boot() {
 	ROUTERSETUP_BOOTING=1
@@ -611,9 +555,6 @@ boot() {
 }
 
 start_service() {
-	# the LuCI menu cache bakes in uci-dependency results (hide_menu), so
-	# drop it whenever our config changes - the menu entry then appears or
-	# disappears on the next page load, no reboot needed
 	rm -f /tmp/luci-indexcache*
 
 	config_load routersetup

@@ -13,13 +13,11 @@ var callIwinfoScan = rpc.declare({
 	expect: { results: [] }
 });
 
-// Router model, same source the Status → Overview page uses (system board).
 var callSystemBoard = rpc.declare({
 	object: 'system',
 	method: 'board'
 });
 
-// Convert a CIDR prefix length to a dotted-quad netmask
 function prefixToMask(prefix) {
 	var bits = 0xFFFFFFFF << (32 - prefix);
 	return [bits >>> 24, (bits >>> 16) & 0xFF, (bits >>> 8) & 0xFF, bits & 0xFF].join('.');
@@ -63,11 +61,6 @@ return view.extend({
 		o.depends('wan_proto', 'static');
 		o.datatype = 'macaddr';
 		o.default = uci.get('routersetup', 'default', 'hw_mac');
-		// MAC пишем ТОЛЬКО в routersetup - применяет его init.d (set_wan_macaddr),
-		// создавая при необходимости секцию network.device. Писать отсюда прямо в
-		// network.wan.macaddr бессмысленно: apply_wan() начинается с
-		// drop_wan_ifaces() -> `uci delete network.wan`, и значение исчезает
-		// вместе с секцией; к тому же на interface-секции опция устарела.
 
 		o = s.taboption('wan', form.Value, 'wan_ipaddr', _('IP address'));
 		o.depends('wan_proto', 'static');
@@ -122,15 +115,8 @@ return view.extend({
 		o.password = true;
 	},
 
-	// --- WISP: uplink over another router's Wi-Fi ---------------------------
-
-	// network picked in the scan dialog; wan_wifi_radio/wan_wifi_enc are
-	// written from here on save (there is no visible widget for them)
 	wispChoice: {},
 
-	// effective radio/encryption for the SSID currently in the form: a fresh
-	// pick from the scan dialog wins, the saved config counts only while the
-	// SSID is unchanged, a manually typed network falls back to a guess
 	wispMeta: function(section, section_id) {
 		var ssid = section.formvalue(section_id, 'wan_wifi_ssid');
 		var key = section.formvalue(section_id, 'wan_wifi_key');
@@ -184,7 +170,7 @@ return view.extend({
 			}, function() { return []; });
 		})).then(function(lists) {
 			var all = [].concat.apply([], lists).filter(function(bss) {
-				return bss.ssid;	/* hidden networks are unusable here */
+				return bss.ssid;
 			});
 
 			all.sort(function(a, b) {
@@ -192,7 +178,7 @@ return view.extend({
 			});
 
 			var seen = {}, nets = [];
-			all.forEach(function(bss) {	/* strongest instance of each SSID */
+			all.forEach(function(bss) {
 				if (seen[bss.ssid])
 					return;
 				seen[bss.ssid] = true;
@@ -308,10 +294,6 @@ return view.extend({
 	addLanOptions: function(s) {
 		var o;
 
-		// forcewrite: cfgvalue below reflects the live network config, so
-		// the form would otherwise consider the fields unchanged and never
-		// save them into routersetup - apply would then get an address without
-		// a netmask (netifd treats that as /32 and DHCP breaks)
 		o = s.taboption('lan', form.Value, 'lan_ipaddr', _('Router IP address'));
 		o.datatype = 'ip4addr';
 		o.rmempty = false;
@@ -387,10 +369,6 @@ return view.extend({
 		o.default = '0';
 		o.rmempty = false;
 
-		// Mark the setup as completed whenever the wizard is saved/applied.
-		// Persisted as routersetup.default.setup_done=1 — survives a
-		// keep-settings sysupgrade, so first-boot uci-defaults can tell an
-		// already-configured router from a factory-fresh one.
 		o = s.taboption('wan', form.Value, 'setup_done');
 		o.render = function() { return Promise.resolve(E('div')); };
 		o.parse = function(section_id) {
@@ -401,10 +379,7 @@ return view.extend({
 	},
 
 	handleSaveApply: function(ev, mode) {
-		// When the user hides the wizard from the menu, this very route
-		// disappears after apply, yet LuCI reloads the current URL (-> 404)
-		// and the browser keeps a cached copy of the menu tree. Flush the
-		// client menu cache and leave for the LuCI start page instead.
+
 		document.addEventListener('uci-applied', function onApplied() {
 			document.removeEventListener('uci-applied', onApplied);
 			if (uci.get('routersetup', 'default', 'hide_menu') == '1') {
@@ -422,8 +397,6 @@ return view.extend({
 		var model = (board.model || '').trim();
 		var m, s;
 
-		// Put the model where the generic word "router" would be, e.g.
-		// "…initial setup of your wwGate AX3000".
 		var descr = model
 			? _('Here you can perform a simple initial setup of your %s').format(model)
 			: _('Here you can perform a simple initial setup of your router.');
@@ -446,10 +419,7 @@ return view.extend({
 		this.addExtraOptions(s);
 
 		return m.render().then(function(node) {
-			// LuCI themes lay out .cbi-value as a flexbox aligned to the top
-			// (bootstrap: baseline, proton2025: flex-start), which leaves the
-			// checkbox of a Flag sitting slightly above its label. Center just
-			// the checkbox rows so the tick lines up with the text.
+
 			node.insertBefore(E('style', { type: 'text/css' },
 				'.cbi-value:has(.cbi-value-field input[type="checkbox"]){align-items:center}' +
 				'.cbi-value:has(.cbi-value-field input[type="checkbox"])>.cbi-value-title{padding-top:0}' +
@@ -460,10 +430,6 @@ return view.extend({
 				'.routersetup-brand-text>.cbi-map-descr{margin:0}'
 			), node.firstChild);
 
-			// One-row branding: logo on the left, the map title + description
-			// stacked to the right of it.
-			// The map title is the only <h2> (sections use <h3>), so the first
-			// match is safe regardless of how the theme nests the map header.
 			var title = node.querySelector('h2');
 			var desc  = node.querySelector('.cbi-map-descr');
 			var textCol = E('div', { 'class': 'routersetup-brand-text' });

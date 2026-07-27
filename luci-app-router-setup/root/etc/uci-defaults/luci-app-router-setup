@@ -21,6 +21,9 @@ elif [ -f /etc/config/wizard ] && [ -z "$(uci -q get routersetup.default.hw_wan)
 	rm -f /etc/config/wizard
 fi
 
+uci -q get routersetup.default >/dev/null 2>&1 || \
+	uci -q rename routersetup.@routersetup[0]=default
+
 [ "$(uci -q get routersetup.default)" = "routersetup" ] || \
 	uci -q set routersetup.default=routersetup
 
