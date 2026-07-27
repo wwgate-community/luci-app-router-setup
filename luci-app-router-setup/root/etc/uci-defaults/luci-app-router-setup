@@ -7,20 +7,28 @@ if [ -f /usr/share/ucitrack/luci-app-router-setup.json ]; then
 fi
 /etc/init.d/rpcd reload
 
-# Переносим настройки с прежнего имени пакета (sysupgrade с сохранением конфига):
-# "wwsetup" - как этот пакет назывался раньше.
+[ -f /etc/config/routersetup ] || : > /etc/config/routersetup
+
+setup_done=$(uci -q get routersetup.default.setup_done)
 if [ -f /etc/config/wwsetup ] && [ -z "$(uci -q get routersetup.default.hw_wan)" ]; then
 	sed 's/^config wwsetup/config routersetup/' \
 	    /etc/config/wwsetup > /etc/config/routersetup
 	rm -f /etc/config/wwsetup
+elif [ -f /etc/config/wizard ] && [ -z "$(uci -q get routersetup.default.hw_wan)" ]; then
+	sed -e 's/^config wizard/config routersetup/' \
+	    -e 's/option wizard_complete/option setup_done/' \
+	    /etc/config/wizard > /etc/config/routersetup
+	rm -f /etc/config/wizard
 fi
 
-# The menu entry is shown only while hide_menu is '0' - make sure the
-# option exists (older/migrated configs may lack it)
+[ "$(uci -q get routersetup.default)" = "routersetup" ] || \
+	uci -q set routersetup.default=routersetup
+
+[ "$setup_done" = "1" ] && uci -q set routersetup.default.setup_done='1'
+
 [ -n "$(uci -q get routersetup.default.hide_menu)" ] || \
 	uci -q set routersetup.default.hide_menu='0'
 
-# Detect the WAN hardware port (not hardcoded per board)
 if [ -z "$(uci -q get routersetup.default.hw_wan)" ]; then
 	wan_dev=$(uci -q get network.wan.device)
 	[ -z "$wan_dev" ] && wan_dev=$(uci -q get network.wan.ifname)
