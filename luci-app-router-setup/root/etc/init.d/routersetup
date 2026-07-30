@@ -207,11 +207,18 @@ recently_saved() {
 	return 0
 }
 
+WAN_METRIC=""
+
 drop_wan_ifaces() {
+	WAN_METRIC=$(uci -q get network.wan.metric)
 	uci -q delete network.wan
 	uci -q delete network.l2tp
 	uci -q delete network.pptp
 	uci -q delete wireless.wwan
+}
+
+restore_wan_metric() {
+	[ -n "$WAN_METRIC" ] && uci -q set "network.wan.metric=$WAN_METRIC"
 }
 
 apply_ipv6() {
@@ -258,7 +265,7 @@ apply_ipv6() {
 	fi
 
 	state_after=$(sysctl -n net.ipv6.conf.all.disable_ipv6 2>/dev/null)
-	[ "$state_before" != "$state_after" ] && /etc/init.d/network restart
+	[ "$state_before" != "$state_after" ] && NEED_NET_RESTART=1
 }
 
 wan_dhcp() {
@@ -273,6 +280,7 @@ wan_dhcp() {
 	uci -q set network.wan=interface
 	uci -q set network.wan.device="$hw_wan"
 	uci -q set network.wan.proto='dhcp'
+	restore_wan_metric
 	set_wan_macaddr "$hw_wan" "${wan_mac:-$hw_mac}"
 	set_iface_dns wan "$dns"
 }
@@ -297,6 +305,7 @@ wan_static() {
 	uci -q set network.wan.ipaddr="$ip"
 	uci -q set network.wan.netmask="$mask"
 	uci -q set network.wan.gateway="$gw"
+	restore_wan_metric
 	set_wan_macaddr "$hw_wan" "${wan_mac:-$hw_mac}"
 	set_iface_dns wan "$dns"
 }
@@ -323,6 +332,7 @@ wan_wifi() {
 	drop_wan_ifaces
 	uci -q set network.wan=interface
 	uci -q set network.wan.proto='dhcp'
+	restore_wan_metric
 
 	uci -q set wireless.wwan=wifi-iface
 	uci -q set wireless.wwan.device="$radio"
@@ -352,6 +362,7 @@ wan_pppoe() {
 	uci -q set network.wan.username="$user"
 	uci -q set network.wan.password="$pass"
 	uci -q set network.wan.pppd_options='debug'
+	restore_wan_metric
 	uci -q set network.wan.ipv6="$([ "$want6" = "1" ] && echo auto || echo 0)"
 	uci -q set "routersetup.default.wan_mac=$(live_mac "$hw_wan")"
 	set_iface_dns wan "$dns"
@@ -401,6 +412,10 @@ apply_wan() {
 	local proto
 
 	config_get proto "$cfg" wan_proto dhcp
+	if [ -z "$hw_wan" ] && [ "$proto" != "wifi" ]; then
+		logger -t routersetup "hw_wan пуст - настройку WAN пропускаю (см. uci-defaults)"
+		return 0
+	fi
 	case "$proto" in
 		dhcp)   wan_dhcp "$cfg" "$hw_wan" ;;
 		static) wan_static "$cfg" "$hw_wan" ;;
@@ -530,6 +545,13 @@ apply_profile() {
 
 	config_get hw_wan "$cfg" hw_wan
 
+	mkdir /tmp/routersetup-apply.lock 2>/dev/null || {
+		logger -t routersetup "применение уже идёт - пропускаю повторный триггер"
+		return 0
+	}
+	trap 'rmdir /tmp/routersetup-apply.lock 2>/dev/null' EXIT
+
+	NEED_NET_RESTART=""
 	apply_ipv6 "$cfg" "$hw_wan"
 	apply_wan "$cfg" "$hw_wan"
 	apply_lan "$cfg"
@@ -543,9 +565,16 @@ apply_profile() {
 
 	(
 		sleep 15
-		/etc/init.d/network reload
+		if [ -n "$NEED_NET_RESTART" ]; then
+			/etc/init.d/network restart
+		else
+			/etc/init.d/network reload
+		fi
 		/etc/init.d/dnsmasq reload
-	) &
+	) >/dev/null 2>&1 </dev/null &
+
+	rmdir /tmp/routersetup-apply.lock 2>/dev/null
+	trap - EXIT
 }
 
 boot() {
